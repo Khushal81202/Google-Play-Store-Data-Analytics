@@ -1,0 +1,89 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+import pytz
+
+# Load datasets
+apps_df = pd.read_csv(r"E:\NULLCLASS\datasets\Play Store Data.csv")
+reviews_df = pd.read_csv(r"E:\NULLCLASS\datasets\User Reviews.csv")
+
+# ================================
+# Data Cleaning & Preprocessing
+# ================================
+
+# Remove missing values in key columns
+apps_df.dropna(subset=['Category', 'Reviews', 'Rating', 'Installs', 'Type', 'Android Ver', 'Size', 'Content Rating', 'App', 'Price'], inplace=True)
+reviews_df.dropna(subset=['Sentiment', 'App'], inplace=True)
+
+# Convert 'Installs' to integer
+apps_df['Installs'] = apps_df['Installs'].str.replace(',', '').str.replace('+', '', regex=False).astype(int)
+
+# Convert 'Reviews' column to numeric format
+apps_df['Reviews'] = apps_df['Reviews'].replace({'M': '*1e6'}, regex=True).map(pd.eval).astype(int)
+
+# Convert 'Price' to numeric
+apps_df['Price'] = apps_df['Price'].str.replace('$', '', regex=False).astype(float)
+
+# Calculate Revenue
+apps_df['Revenue'] = apps_df['Price'] * apps_df['Installs']
+
+# Convert 'Size' column to numeric (handling MB, KB cases)
+def convert_size(size):
+    if isinstance(size, str):
+        if 'M' in size:
+            return float(size.replace('M', ''))
+        elif 'K' in size:
+            return float(size.replace('K', '')) / 1024
+    return np.nan
+
+apps_df['Size'] = apps_df['Size'].apply(convert_size)
+
+# Convert 'Last Updated' to datetime
+apps_df['Last Updated'] = pd.to_datetime(apps_df['Last Updated'], errors='coerce')
+
+# ================================
+# Filtering Criteria
+# ================================
+
+# Filter for apps updated in the last year
+one_year_ago = datetime.now() - timedelta(days=365)
+apps_df = apps_df[apps_df['Last Updated'] >= one_year_ago]
+
+# Filter for apps with at least 100,000 installs and more than 1,000 reviews
+apps_df = apps_df[(apps_df['Installs'] >= 100000) & (apps_df['Reviews'] > 1000)]
+
+# Remove specific categories & genres
+apps_df = apps_df[~apps_df['Category'].str.startswith(('A', 'C', 'G', 'S'))]
+apps_df = apps_df[~apps_df['Genres'].str.startswith(('A', 'F', 'E', 'G', 'I', 'K'), na=False)]
+
+# Keep top 5 categories based on installs
+top_categories = apps_df.groupby('Category')['Installs'].sum().nlargest(5).index
+apps_df = apps_df[apps_df['Category'].isin(top_categories)]
+
+# Merge with user reviews
+merged_df = pd.merge(reviews_df, apps_df[['App', 'Category', 'Rating']], on='App', how='inner')
+
+# ================================
+# Feature Engineering
+# ================================
+
+# Create Rating Groups
+def classify_rating(rating):
+    if rating <= 2.0:
+        return '1-2 stars'
+    elif rating <= 4.0:
+        return '3-4 stars'
+    else:
+        return '4-5 stars'
+
+merged_df['Rating Group'] = merged_df['Rating'].apply(classify_rating)
+
+# Aggregate sentiment distribution per rating group
+sentiment_counts = merged_df.groupby(['Category', 'Rating Group', 'Sentiment']).size().unstack(fill_value=0)
+
+# Save final cleaned dataset
+apps_df.to_csv("cleaned_data.csv", index=False)
+
+print("Data cleaning complete. Processed dataset saved as 'cleaned_data.csv'")
